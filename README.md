@@ -1,16 +1,11 @@
 # Stratum V1 Proxy
 
-A high-performance Stratum V1 proxy written in Rust for Bitcoin mining. This proxy accepts Stratum V1 TCP connections from mining clients and forwards all commands to an upstream Stratum V1 server, while logging all traffic to stdout.
+A Stratum V1 (Bitcoin mining protocol) proxy, written in Rust. This proxy accepts Stratum V1 TCP connections from mining clients and forwards all commands to an upstream Stratum V1 server, while logging all traffic to stdout.
 
 ## Features
 
-- ✅ Accepts multiple concurrent Stratum V1 TCP connections
-- ✅ Forwards all commands unmodified to upstream server
-- ✅ Bidirectional message forwarding (client ↔ upstream)
-- ✅ Real-time logging of all Stratum V1 commands to stdout
-- ✅ Pretty-printed JSON output for better readability
-- ✅ Configurable via environment variables
-- ✅ Async/await architecture using Tokio for high performance
+- Accepts multiple concurrent connections
+- Async/await architecture using Tokio for high performance
 
 ## Configuration
 
@@ -98,25 +93,7 @@ The proxy handles all standard Stratum V1 mining protocol messages, including:
 
 All messages are forwarded unmodified, ensuring full protocol compatibility.
 
-## Architecture
-
-The proxy uses Tokio's async runtime for efficient handling of multiple concurrent connections:
-
-1. **Main Loop**: Accepts incoming client connections
-2. **Per-Client Handler**: For each client:
-   - Establishes connection to upstream server
-   - Spawns two async tasks:
-     - Client → Upstream forwarding
-     - Upstream → Client forwarding
-3. **Message Forwarding**: Each task reads line-delimited JSON messages, logs them, and forwards them
-
 ## Development
-
-### Dependencies
-
-- `tokio` - Async runtime with full features
-- `serde` & `serde_json` - JSON parsing and serialization
-- `anyhow` - Error handling
 
 ### Testing
 
@@ -134,7 +111,7 @@ nc localhost 3333
 
 ## License
 
-This project is open source and available under your chosen license.
+This project available under MIT License.
 
 ## Contributing
 
