@@ -9,12 +9,14 @@ A Stratum V1 (Bitcoin mining protocol) proxy, written in Rust. This proxy accept
 
 ## Configuration
 
-The proxy can be configured using environment variables:
+The proxy can be configured using command-line arguments:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PROXY_LISTEN_ADDR` | Address and port to listen on | `0.0.0.0:3333` |
-| `UPSTREAM_ADDR` | Upstream Stratum V1 server address (host:port) | `127.0.0.1:3334` |
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--listen` | `-l` | Address and port to listen on | `0.0.0.0:3333` |
+| `--upstream` | `-u` | Upstream Stratum V1 server address (host:port) | `127.0.0.1:3334` |
+
+Run `stratumv1-proxy-rs --help` to see all available options.
 
 ## Building
 
@@ -31,9 +33,12 @@ cargo run --release
 
 ### Using custom configuration
 ```bash
-PROXY_LISTEN_ADDR="0.0.0.0:3333" \
-UPSTREAM_ADDR="pool.example.com:3333" \
-cargo run --release
+cargo run --release -- --listen 0.0.0.0:3333 --upstream pool.example.com:3333
+```
+
+Or using short options:
+```bash
+cargo run --release -- -l 0.0.0.0:3333 -u pool.example.com:3333
 ```
 
 ### Running the compiled binary
@@ -42,14 +47,17 @@ cargo run --release
 ./target/release/stratumv1-proxy-rs
 
 # With custom configuration
-UPSTREAM_ADDR="pool.example.com:3333" ./target/release/stratumv1-proxy-rs
+./target/release/stratumv1-proxy-rs --upstream pool.example.com:3333
+
+# Or with both options
+./target/release/stratumv1-proxy-rs -l 0.0.0.0:3333 -u pool.example.com:3333
 ```
 
 ## Usage Example
 
 1. Start the proxy pointing to your upstream Stratum V1 server:
 ```bash
-UPSTREAM_ADDR="stratum.pool.com:3333" cargo run --release
+cargo run --release -- --upstream stratum.pool.com:3333
 ```
 
 2. Configure your mining software to connect to the proxy:
