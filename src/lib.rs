@@ -16,8 +16,10 @@ pub struct ProxyConfig {
 impl ProxyConfig {
     /// Load configuration from environment variables or use defaults
     pub fn from_env() -> Self {
-        let listen_addr = env::var("PROXY_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:3333".to_string());
-        let upstream_addr = env::var("UPSTREAM_ADDR").unwrap_or_else(|_| "127.0.0.1:3334".to_string());
+        let listen_addr =
+            env::var("PROXY_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:3333".to_string());
+        let upstream_addr =
+            env::var("UPSTREAM_ADDR").unwrap_or_else(|_| "127.0.0.1:3334".to_string());
 
         ProxyConfig {
             listen_addr,
@@ -52,7 +54,7 @@ pub async fn run_proxy(config: ProxyConfig) -> Result<()> {
             Ok((client_socket, client_addr)) => {
                 println!("[NEW CONNECTION] Client connected from: {}", client_addr);
                 let config = config.clone();
-                
+
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(client_socket, config).await {
                         eprintln!("[ERROR] Client {} error: {}", client_addr, e);
@@ -70,14 +72,17 @@ pub async fn run_proxy(config: ProxyConfig) -> Result<()> {
 /// Handle a single client connection
 async fn handle_client(client_socket: TcpStream, config: ProxyConfig) -> Result<()> {
     let client_addr = client_socket.peer_addr()?;
-    
+
     // Connect to upstream server
-    println!("[{}] Connecting to upstream: {}", client_addr, config.upstream_addr);
-    
+    println!(
+        "[{}] Connecting to upstream: {}",
+        client_addr, config.upstream_addr
+    );
+
     let upstream_socket = TcpStream::connect(&config.upstream_addr)
         .await
         .context("Failed to connect to upstream server")?;
-    
+
     println!("[{}] Connected to upstream server", client_addr);
 
     // Split sockets into read and write halves

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use stratumv1_proxy_rs::{ProxyConfig, run_proxy};
+use stratumv1_proxy_rs::{run_proxy, ProxyConfig};
 
 /// Stratum V1 Proxy - forwards mining protocol traffic between clients and upstream server
 #[derive(Parser, Debug)]
