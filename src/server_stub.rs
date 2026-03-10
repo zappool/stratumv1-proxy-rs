@@ -1,9 +1,8 @@
 use crate::{Message, ResponseMessage};
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -11,24 +10,29 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinHandle;
 
-struct MessageStore {
-    rec_msgs: HashMap<String, Message>,
+pub struct MessageStore<M>
+where
+    M: Clone,
+{
+    rec_msgs: HashMap<String, M>,
 }
 
-impl MessageStore {
+impl<M> MessageStore<M>
+where
+    M: Clone,
+{
     pub fn new() -> Self {
         Self {
             rec_msgs: HashMap::new(),
         }
     }
-    pub fn add(&mut self, message: &Message) {
-        self.rec_msgs
-            .insert(message.id.to_string(), message.clone());
+    pub fn add(&mut self, id: String, message: &M) {
+        self.rec_msgs.insert(id, message.clone());
     }
     pub fn count(&self) -> usize {
         self.rec_msgs.len()
     }
-    pub fn get(&self, id: &str) -> Option<Message> {
+    pub fn get(&self, id: &str) -> Option<M> {
         self.rec_msgs.get(&id.to_string()).cloned()
     }
 }
@@ -37,24 +41,23 @@ impl MessageStore {
 #[derive(Clone)]
 pub struct ServerStub {
     listen_addr: String,
-    stop_flag: Arc<RwLock<bool>>,
     stop_signal: Arc<Notify>,
     listener: Arc<RwLock<Option<TcpListener>>>,
-    run_thread: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// Background thread for processing incoming connections
+    bg_thread: Arc<RwLock<Option<JoinHandle<()>>>>,
     /// Received connections count
     connect_count: Arc<RwLock<usize>>,
     /// Received messages
-    message_store: Arc<RwLock<MessageStore>>,
+    message_store: Arc<RwLock<MessageStore<Message>>>,
 }
 
 impl ServerStub {
     pub fn new(listen_addr: &str) -> Self {
         Self {
             listen_addr: listen_addr.to_string(),
-            stop_flag: Arc::new(RwLock::new(false)),
             stop_signal: Arc::new(Notify::new()),
             listener: Arc::new(RwLock::new(None)),
-            run_thread: Arc::new(RwLock::new(None)),
+            bg_thread: Arc::new(RwLock::new(None)),
             connect_count: Arc::new(RwLock::new(0)),
             message_store: Arc::new(RwLock::new(MessageStore::new())),
         }
@@ -67,7 +70,7 @@ impl ServerStub {
         let thread = tokio::spawn(async move {
             let _ = self_clone.run_background().await.unwrap();
         });
-        *self.run_thread.write().await.deref_mut() = Some(thread);
+        *self.bg_thread.write().await = Some(thread);
         Ok(())
     }
 
@@ -81,16 +84,15 @@ impl ServerStub {
                 let _ = tokio::time::sleep(Duration::from_millis(1)).await;
             }
         }
-        *self.stop_flag.write().await.deref_mut() = true;
         self.stop_signal.notify_one();
         // Wait until completion
-        println!("Waiting for completion of run thread");
-        if let Some(run_thread) = self.run_thread.write().await.take() {
-            let _ = run_thread.await?;
+        println!("Server Stub: Waiting for completion of run thread");
+        if let Some(bg_thread) = self.bg_thread.write().await.take() {
+            let _ = bg_thread.await?;
         }
         // Unlisten
         let _ = self.unlisten().await?;
-        println!("Run thread completed, un-listened, stopping.");
+        println!("Server Stub: bg thread completed, un-listened, stopping.");
         Ok(())
     }
 
@@ -98,7 +100,7 @@ impl ServerStub {
         println!("=== Stratum V1 Server Stub ===");
 
         if self.listener.read().await.is_some() {
-            return Err(anyhow!("Already listening!").into());
+            return Err(anyhow!("Already listening!"));
         }
 
         let listener = Some(
@@ -106,7 +108,7 @@ impl ServerStub {
                 .await
                 .context("Failed to bind to listen address")?,
         );
-        *self.listener.write().await.deref_mut() = listener;
+        *self.listener.write().await = listener;
 
         println!("Listening on: {}", self.listen_addr);
         println!("==============================");
@@ -129,17 +131,20 @@ impl ServerStub {
 
     async fn run_background(&self) -> Result<()> {
         if self.listener.read().await.is_none() {
-            return Err(anyhow!("Not listening!").into());
+            return Err(anyhow!("Not listening!"));
         }
         println!("Server Stub waiting for connections ...");
 
-        // while !(self.stop_flag.read().await.deref()) {
         loop {
             let listener = self.listener.read().await;
             if listener.is_none() {
                 return Err(anyhow!("Not listening!"));
             }
             tokio::select! {
+                _ = self.stop_signal.notified() => {
+                    println!("Server Stub: received stop signal");
+                    break;
+                }
                 accept_result = listener.as_ref().unwrap().accept() => {
                     match accept_result {
                         Ok((client_socket, client_addr)) => {
@@ -163,20 +168,16 @@ impl ServerStub {
                         }
                     }
                 }
-                _ = self.stop_signal.notified() => {
-                    println!("Server Stub received stop signal {}", self.stop_flag.read().await);
-                    break;
-                }
             }
         }
-        println!("Server Stub stopped {}", self.stop_flag.read().await);
+        println!("Server Stub stopped");
         Ok(())
     }
 
     /// Handle a single client connection
     async fn handle_client(
         client_socket: TcpStream,
-        message_store: Arc<RwLock<MessageStore>>,
+        message_store: Arc<RwLock<MessageStore<Message>>>,
     ) -> Result<()> {
         let client_addr = client_socket.peer_addr()?;
 
@@ -213,7 +214,7 @@ impl ServerStub {
                         Ok(msg) => {
                             println!("[{}]: {}", client_addr, msg.to_string());
                             // Store the message
-                            message_store.write().await.add(&msg);
+                            message_store.write().await.add(msg.id(), &msg);
                             // Send reply
                             if let Ok(Some(response)) = Self::handle_message(&msg) {
                                 let _ = Self::send_response(&mut client_writer, &response).await?;
@@ -223,8 +224,6 @@ impl ServerStub {
                 }
             }
         }
-
-        // TODO send replies
 
         Ok(())
     }
@@ -243,8 +242,9 @@ impl ServerStub {
                             }
                         } else if p.is_object() {
                             let pp = &p.as_object().unwrap();
-                            if let Some(mask) = pp.get("version-rolling.mask") {
-                                result.insert("version-rolling.mask".to_string(), mask.clone());
+                            if let Some(_mask) = pp.get("version-rolling.mask") {
+                                result
+                                    .insert("version-rolling.mask".to_string(), "1fffe000".into());
                             }
                         }
                     }
@@ -255,6 +255,30 @@ impl ServerStub {
                     result: Value::Object(result),
                 }))
             }
+            "mining.subscribe" => {
+                let result = json![[[["mining.notify", "6a92c32a"]], "2ef38e6a", 8]];
+                Ok(Some(ResponseMessage {
+                    error: Value::Null,
+                    id: message.id.clone(),
+                    result,
+                }))
+            }
+            "mining.authorize" => {
+                let result = json![true];
+                Ok(Some(ResponseMessage {
+                    error: Value::Null,
+                    id: message.id.clone(),
+                    result,
+                }))
+            }
+            "mining.submit" => {
+                let result = json![true];
+                Ok(Some(ResponseMessage {
+                    error: Value::Null,
+                    id: message.id.clone(),
+                    result,
+                }))
+            }
             &_ => Ok(None),
         }
     }
@@ -263,15 +287,22 @@ impl ServerStub {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        let msg = message.to_string() + "\n";
+        let msg = json![{
+            "id": message.id,
+            "error": message.error,
+            "result": message.result,
+        }]
+        .to_string()
+            + "\n";
         writer
             .write_all(msg.as_bytes())
             .await
             .context("Failed to write message")?;
         writer.flush().await.context("Failed to flush")?;
         println!(
-            "Sent response, id {}, result {:?}",
+            "Sent response, id {}, error  {}, result {:?}",
             message.id,
+            message.error,
             message.result.to_string()
         );
         Ok(())

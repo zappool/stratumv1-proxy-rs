@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 /// A Stratum V1 message, with id, method, and custom parameters
 #[derive(Clone)]
 pub struct Message {
-    pub id: String,
+    pub id: Value,
     pub method: String,
     pub params: Value,
 }
@@ -43,10 +43,14 @@ impl Message {
             json
         ))?;
         Ok(Self {
-            id: id.to_string(),
+            id: id.clone(),
             method: method_str.to_string(),
             params: params.clone(),
         })
+    }
+
+    pub fn id(&self) -> String {
+        self.id.to_string()
     }
 
     pub fn to_pretty_string(&self) -> String {
@@ -70,12 +74,35 @@ impl std::fmt::Display for Message {
 #[derive(Clone)]
 pub struct ResponseMessage {
     pub error: Value,
-    pub id: String,
+    pub id: Value,
     pub result: Value,
 }
 
 impl ResponseMessage {
-    // pub fn from_json(json: &Value) -> Result<Self> {
+    pub fn from_json(json: &Value) -> Result<Self> {
+        let json_obj = json
+            .as_object()
+            .ok_or(anyhow!("Error: message should be a JSON object {}", json))?;
+        let id = json_obj
+            .get("id")
+            .ok_or(anyhow!("Error: message should have an ID field {}", json))?;
+        let error = json_obj
+            .get("error")
+            .ok_or(anyhow!("Error: message should have a ERROR field {}", json))?;
+        let result = json_obj.get("result").ok_or(anyhow!(
+            "Error: message should have a RESULT field {}",
+            json
+        ))?;
+        Ok(Self {
+            id: id.clone(),
+            error: error.clone(),
+            result: result.clone(),
+        })
+    }
+
+    pub fn id(&self) -> String {
+        self.id.to_string()
+    }
 
     pub fn to_pretty_string(&self) -> String {
         // Pretty-print JSON
