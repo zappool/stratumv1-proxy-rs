@@ -1,4 +1,4 @@
-use crate::Message;
+use crate::{Message, ResponseMessage};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -94,7 +94,7 @@ impl ServerStub {
         Ok(())
     }
 
-    pub async fn listen(&self) -> Result<()> {
+    async fn listen(&self) -> Result<()> {
         println!("=== Stratum V1 Server Stub ===");
 
         if self.listener.read().await.is_some() {
@@ -113,7 +113,7 @@ impl ServerStub {
         Ok(())
     }
 
-    pub async fn unlisten(&self) -> Result<()> {
+    async fn unlisten(&self) -> Result<()> {
         if self.listener.read().await.is_none() {
             // Not listening, no-op
             return Ok(());
@@ -127,7 +127,7 @@ impl ServerStub {
         Ok(())
     }
 
-    pub async fn run_background(&self) -> Result<()> {
+    async fn run_background(&self) -> Result<()> {
         if self.listener.read().await.is_none() {
             return Err(anyhow!("Not listening!").into());
         }
@@ -181,7 +181,7 @@ impl ServerStub {
         let client_addr = client_socket.peer_addr()?;
 
         // Split sockets into read and write halves
-        let (client_reader, _client_writer) = client_socket.into_split();
+        let (client_reader, mut client_writer) = client_socket.into_split();
 
         // Read contents
         let mut buf_reader = BufReader::new(client_reader);
@@ -211,9 +211,13 @@ impl ServerStub {
                             eprintln!("[{}]: ERROR: couldn't parse: {} {}", client_addr, err, line);
                         }
                         Ok(msg) => {
+                            println!("[{}]: {}", client_addr, msg.to_string());
                             // Store the message
                             message_store.write().await.add(&msg);
-                            println!("[{}]: {}", client_addr, msg.to_string());
+                            // Send reply
+                            if let Ok(Some(response)) = Self::handle_message(&msg) {
+                                let _ = Self::send_response(&mut client_writer, &response).await?;
+                            }
                         }
                     }
                 }
@@ -222,6 +226,54 @@ impl ServerStub {
 
         // TODO send replies
 
+        Ok(())
+    }
+
+    fn handle_message(message: &Message) -> Result<Option<ResponseMessage>> {
+        match message.method.as_str() {
+            "mining.configure" => {
+                let mut result = serde_json::map::Map::<String, Value>::new();
+                if let Some(params) = message.params.as_array() {
+                    for p in params {
+                        if p.is_array() {
+                            for pp in p.as_array().unwrap().iter() {
+                                if pp.to_string() == "version-rolling" {
+                                    result.insert("version.rolling".to_string(), Value::Bool(true));
+                                }
+                            }
+                        } else if p.is_object() {
+                            let pp = &p.as_object().unwrap();
+                            if let Some(mask) = pp.get("version-rolling.mask") {
+                                result.insert("version-rolling.mask".to_string(), mask.clone());
+                            }
+                        }
+                    }
+                }
+                Ok(Some(ResponseMessage {
+                    error: Value::Null,
+                    id: message.id.clone(),
+                    result: Value::Object(result),
+                }))
+            }
+            &_ => Ok(None),
+        }
+    }
+
+    async fn send_response<W>(writer: &mut W, message: &ResponseMessage) -> Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let msg = message.to_string() + "\n";
+        writer
+            .write_all(msg.as_bytes())
+            .await
+            .context("Failed to write message")?;
+        writer.flush().await.context("Failed to flush")?;
+        println!(
+            "Sent response, id {}, result {:?}",
+            message.id,
+            message.result.to_string()
+        );
         Ok(())
     }
 
@@ -256,7 +308,7 @@ impl ClientStub {
         }
     }
 
-    pub async fn connect(&mut self) -> Result<()> {
+    pub async fn start(&mut self) -> Result<()> {
         let socket = TcpStream::connect(&self.server_addr)
             .await
             .context("Failed to connect to upstream server")?;
@@ -264,7 +316,7 @@ impl ClientStub {
         Ok(())
     }
 
-    pub async fn disconnect(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> Result<()> {
         if let Some(socket) = &mut self.socket {
             let _ = socket.shutdown().await;
             self.socket = None;

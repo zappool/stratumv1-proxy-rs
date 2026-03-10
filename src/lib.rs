@@ -47,7 +47,7 @@ impl Message {
         })
     }
 
-    pub fn to_prerry_string(&self) -> String {
+    pub fn to_pretty_string(&self) -> String {
         // Pretty-print JSON
         if let Ok(pretty) = serde_json::to_string_pretty(&self.params) {
             format!("{} {} {}", self.id, self.method, pretty)
@@ -61,6 +61,34 @@ impl Message {
 impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {} {}", self.id, self.method, self.params)
+    }
+}
+
+/// A Stratum V1 response message, with id, error, and result parameters
+#[derive(Clone)]
+pub struct ResponseMessage {
+    pub error: Value,
+    pub id: String,
+    pub result: Value,
+}
+
+impl ResponseMessage {
+    // pub fn from_json(json: &Value) -> Result<Self> {
+
+    pub fn to_pretty_string(&self) -> String {
+        // Pretty-print JSON
+        if let Ok(pretty) = serde_json::to_string_pretty(&self.result) {
+            format!("{} {} {}", self.id, self.error, pretty)
+        } else {
+            // coudln't pretty-print json
+            self.to_string()
+        }
+    }
+}
+
+impl std::fmt::Display for ResponseMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {} {}", self.id, self.error, self.result)
     }
 }
 
@@ -116,7 +144,7 @@ impl Hook for PrintToStdoutHook {
             "[{}] {:?}: {}",
             client_addr,
             dir,
-            message.to_prerry_string(),
+            message.to_pretty_string(),
         );
         Ok(None)
     }

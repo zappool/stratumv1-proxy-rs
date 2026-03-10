@@ -9,8 +9,8 @@ async fn test_client_stub_connect_only() {
     let _ = server.start().await.unwrap();
 
     let mut client = ClientStub::new(server_addr, "username.device");
-    let _ = client.connect().await.unwrap();
-    let _ = client.disconnect().await.unwrap();
+    let _ = client.start().await.unwrap();
+    let _ = client.stop().await.unwrap();
 
     let _ = server.stop(true).await.unwrap();
 
@@ -26,12 +26,12 @@ async fn test_client_stub_mining_init() {
     let _ = server.start().await.unwrap();
 
     let mut client = ClientStub::new(server_addr, "username.device");
-    let _ = client.connect().await.unwrap();
+    let _ = client.start().await.unwrap();
     let _ = client.send_mining_configure().await.unwrap();
     let _ = client.send_mining_subscribe().await.unwrap();
     let _ = client.send_mining_authorize().await.unwrap();
     let _ = client.send_mining_suggest_difficulty(1000).await.unwrap();
-    let _ = client.disconnect().await.unwrap();
+    let _ = client.stop().await.unwrap();
 
     let _ = server.stop(true).await.unwrap();
 
