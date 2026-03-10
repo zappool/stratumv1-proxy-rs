@@ -22,25 +22,23 @@ pub struct Message {
 
 impl Message {
     pub fn from_json(json: &Value) -> Result<Self> {
-        let json_obj = json.as_object().ok_or(anyhow!(
-            "Error: message should be a JSON object {}",
-            json.to_string()
-        ))?;
-        let id = json_obj.get("id").ok_or(anyhow!(
-            "Error: message should have an ID field {}",
-            json.to_string()
-        ))?;
+        let json_obj = json
+            .as_object()
+            .ok_or(anyhow!("Error: message should be a JSON object {}", json))?;
+        let id = json_obj
+            .get("id")
+            .ok_or(anyhow!("Error: message should have an ID field {}", json))?;
         let method = json_obj.get("method").ok_or(anyhow!(
             "Error: message should have a METHOD field {}",
-            json.to_string()
+            json
         ))?;
         let method_str = method.as_str().ok_or(anyhow!(
             "Error: message should have a METHOD string field {}",
-            method.to_string()
+            method
         ))?;
         let params = json_obj.get("params").ok_or(anyhow!(
             "Error: message should have a PARAMS field {}",
-            json.to_string()
+            json
         ))?;
         Ok(Self {
             id: id.to_string(),
@@ -60,9 +58,9 @@ impl Message {
     }
 }
 
-impl ToString for Message {
-    fn to_string(&self) -> String {
-        format!("{} {} {}", self.id, self.method, self.params.to_string())
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {} {}", self.id, self.method, self.params)
     }
 }
 
