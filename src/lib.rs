@@ -40,32 +40,31 @@ impl Message {
         let params = json_obj.get("params");
         let error = json_obj.get("error");
         let result = json_obj.get("result");
-        if method.is_some() && params.is_some() {
-            // This is a command
-            let method = method
-                .unwrap()
-                .as_str()
-                .ok_or(anyhow!("Method should be a string, {}", json))?
-                .to_string();
-            Ok(Self::new_command(
-                id.clone(),
-                method,
-                params.unwrap().clone(),
-            ))
-        } else if error.is_some() && result.is_some() {
-            // This is a response
-            Ok(Self::new_response(
-                id.clone(),
-                error.unwrap().clone(),
-                result.unwrap().clone(),
-            ))
-        } else {
-            // None
-            Err(anyhow!(
-                "Could not parse, neither as command nor as response, '{}'",
-                json
-            ))
+        if let Some(method) = method {
+            if let Some(params) = params {
+                // This is a command
+                let method = method
+                    .as_str()
+                    .ok_or(anyhow!("Method should be a string, {}", json))?
+                    .to_string();
+                return Ok(Self::new_command(id.clone(), method, params.clone()));
+            }
         }
+        if let Some(result) = result {
+            if let Some(error) = error {
+                // This is a response
+                return Ok(Self::new_response(
+                    id.clone(),
+                    error.clone(),
+                    result.clone(),
+                ));
+            }
+        }
+        // None
+        Err(anyhow!(
+            "Could not parse, neither as command nor as response, '{}'",
+            json
+        ))
     }
 
     pub fn id(&self) -> String {
