@@ -1,4 +1,5 @@
-use crate::server_stub::{ClientStub, ServerStub};
+use crate::client_stub::ClientStub;
+use crate::server_stub::ServerStub;
 use serial_test::serial;
 
 #[tokio::test]

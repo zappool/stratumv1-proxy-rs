@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod client_stub;
+#[cfg(test)]
 mod server_stub;
 #[cfg(test)]
 mod test_proxy;
