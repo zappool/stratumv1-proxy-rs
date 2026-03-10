@@ -1,5 +1,5 @@
 use crate::server_stub::MessageStore;
-use crate::ResponseMessage;
+use crate::Message;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -25,7 +25,7 @@ pub struct ClientStub {
     /// Bytes read (from server)
     read_count: Arc<RwLock<usize>>,
     /// Received messages
-    message_store: Arc<RwLock<MessageStore<ResponseMessage>>>,
+    message_store: Arc<RwLock<MessageStore>>,
 }
 
 impl ClientStub {
@@ -128,14 +128,14 @@ impl ClientStub {
                                             eprintln!("Client Stub: ERROR: couldn't parse: {} {}", err, line);
                                         }
                                         Ok(json) => {
-                                            match ResponseMessage::from_json(&json) {
+                                            match Message::from_json(&json) {
                                                 Err(err) => {
                                                     eprintln!("Client Stub: ERROR: couldn't parse: {} {}", err, line);
                                                 }
-                                                Ok(resp) => {
-                                                    println!("Client Stub: Read response: {}", resp.to_string());
+                                                Ok(msg) => {
+                                                    println!("Client Stub: Read message: {}", msg);
                                                     // Store the message
-                                                    self.message_store.write().await.add(resp.id(), &resp);
+                                                    self.message_store.write().await.add(msg.id(), &msg);
                                                 }
                                             }
                                         }
@@ -151,7 +151,7 @@ impl ClientStub {
         Ok(())
     }
 
-    pub async fn send_message(&mut self, method: String, params: Value) -> Result<()> {
+    pub async fn send_command(&mut self, method: String, params: Value) -> Result<()> {
         let mut write_socket_lock = self.write_socket.write().await;
         match write_socket_lock.as_mut() {
             None => Err(anyhow!("Not connected")),
@@ -159,24 +159,14 @@ impl ClientStub {
                 // Forward the message (including newline)
                 self.id_counter += 1;
                 let id = self.id_counter;
-                let msg = json![{
-                    "id": id,
-                    "method": method,
-                    "params": params,
-                }]
-                .to_string()
-                    + "\n";
+                let message = Message::new_command(id.into(), method, params);
+                let msg = message.to_json().to_string() + "\n";
                 write_socket
                     .write_all(msg.as_bytes())
                     .await
                     .context("Failed to write message")?;
                 write_socket.flush().await.context("Failed to flush")?;
-                println!(
-                    "Client Stub: Sent message, id {}, method {}, params {:?}",
-                    id,
-                    method,
-                    params.to_string()
-                );
+                println!("Client Stub: Sent message, {}", message);
                 Ok(())
             }
         }
@@ -190,31 +180,35 @@ impl ClientStub {
         self.message_store.read().await.count()
     }
 
-    pub async fn get_message(&self, id: &str) -> Option<ResponseMessage> {
-        self.message_store.read().await.get(id)
+    pub async fn get_message_by_id(&self, id: &str) -> Option<Message> {
+        self.message_store.read().await.get_by_id(id)
+    }
+
+    pub async fn get_message_by_index(&self, index: usize) -> Option<Message> {
+        self.message_store.read().await.get_by_index(index)
     }
 
     pub async fn send_mining_configure(&mut self) -> Result<()> {
         let params = json![[["version-rolling"],{"version-rolling.mask": "ffffffff"}]];
-        self.send_message("mining.configure".to_string(), params)
+        self.send_command("mining.configure".to_string(), params)
             .await
     }
 
     pub async fn send_mining_subscribe(&mut self) -> Result<()> {
         let params = json![["bitaxe/BM1368/v2.8.1"]];
-        self.send_message("mining.subscribe".to_string(), params)
+        self.send_command("mining.subscribe".to_string(), params)
             .await
     }
 
     pub async fn send_mining_authorize(&mut self) -> Result<()> {
         let params = json![[self.username, "password"]];
-        self.send_message("mining.authorize".to_string(), params)
+        self.send_command("mining.authorize".to_string(), params)
             .await
     }
 
     pub async fn send_mining_suggest_difficulty(&mut self, difficluty: u64) -> Result<()> {
         let params = json![[difficluty]];
-        self.send_message("mining.suggest_difficulty".to_string(), params)
+        self.send_command("mining.suggest_difficulty".to_string(), params)
             .await
     }
 
@@ -227,6 +221,6 @@ impl ClientStub {
             "7a300274",
             "05eb4000"
         ]];
-        self.send_message("mining.submit".to_string(), params).await
+        self.send_command("mining.submit".to_string(), params).await
     }
 }

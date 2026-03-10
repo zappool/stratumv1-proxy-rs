@@ -6,7 +6,7 @@ mod server_stub;
 mod test_proxy;
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::env;
 use std::fmt;
 use std::sync::{Arc, RwLock};
@@ -14,15 +14,21 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
-/// A Stratum V1 message, with id, method, and custom parameters
 #[derive(Clone)]
-pub struct Message {
-    pub id: Value,
-    pub method: String,
-    pub params: Value,
+pub enum Message {
+    Command(CommandMessage),
+    Response(ResponseMessage),
 }
 
 impl Message {
+    pub fn new_command(id: Value, method: String, params: Value) -> Self {
+        Self::Command(CommandMessage { id, method, params })
+    }
+
+    pub fn new_response(id: Value, error: Value, result: Value) -> Self {
+        Self::Response(ResponseMessage { id, error, result })
+    }
+
     pub fn from_json(json: &Value) -> Result<Self> {
         let json_obj = json
             .as_object()
@@ -30,27 +36,95 @@ impl Message {
         let id = json_obj
             .get("id")
             .ok_or(anyhow!("Error: message should have an ID field {}", json))?;
-        let method = json_obj.get("method").ok_or(anyhow!(
-            "Error: message should have a METHOD field {}",
-            json
-        ))?;
-        let method_str = method.as_str().ok_or(anyhow!(
-            "Error: message should have a METHOD string field {}",
-            method
-        ))?;
-        let params = json_obj.get("params").ok_or(anyhow!(
-            "Error: message should have a PARAMS field {}",
-            json
-        ))?;
-        Ok(Self {
-            id: id.clone(),
-            method: method_str.to_string(),
-            params: params.clone(),
-        })
+        let method = json_obj.get("method");
+        let params = json_obj.get("params");
+        let error = json_obj.get("error");
+        let result = json_obj.get("result");
+        if method.is_some() && params.is_some() {
+            // This is a command
+            let method = method
+                .unwrap()
+                .as_str()
+                .ok_or(anyhow!("Method should be a string, {}", json))?
+                .to_string();
+            Ok(Self::new_command(
+                id.clone(),
+                method,
+                params.unwrap().clone(),
+            ))
+        } else if error.is_some() && result.is_some() {
+            // This is a response
+            Ok(Self::new_response(
+                id.clone(),
+                error.unwrap().clone(),
+                result.unwrap().clone(),
+            ))
+        } else {
+            // None
+            Err(anyhow!(
+                "Could not parse, neither as command nor as response, '{}'",
+                json
+            ))
+        }
     }
 
     pub fn id(&self) -> String {
+        match self {
+            Self::Command(cm) => cm.id(),
+            Self::Response(rm) => rm.id(),
+        }
+    }
+
+    pub fn method(&self) -> Option<&String> {
+        match self {
+            Self::Command(cm) => Some(&cm.method),
+            Self::Response(_rm) => None,
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        match self {
+            Self::Command(cm) => cm.to_json(),
+            Self::Response(rm) => rm.to_json(),
+        }
+    }
+
+    pub fn to_pretty_string(&self) -> String {
+        match self {
+            Self::Command(cm) => cm.to_pretty_string(),
+            Self::Response(rm) => rm.to_pretty_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Command(cm) => cm.fmt(f),
+            Self::Response(rm) => rm.fmt(f),
+        }
+    }
+}
+
+/// A Stratum V1 command message, with id, method, and custom parameters
+#[derive(Clone)]
+pub struct CommandMessage {
+    pub id: Value,
+    pub method: String,
+    pub params: Value,
+}
+
+impl CommandMessage {
+    fn id(&self) -> String {
         self.id.to_string()
+    }
+
+    fn to_json(&self) -> Value {
+        json![{
+            "id": self.id,
+            "method": self.method,
+            "params": self.params,
+        }]
     }
 
     pub fn to_pretty_string(&self) -> String {
@@ -64,7 +138,7 @@ impl Message {
     }
 }
 
-impl std::fmt::Display for Message {
+impl std::fmt::Display for CommandMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {} {}", self.id, self.method, self.params)
     }
@@ -79,29 +153,16 @@ pub struct ResponseMessage {
 }
 
 impl ResponseMessage {
-    pub fn from_json(json: &Value) -> Result<Self> {
-        let json_obj = json
-            .as_object()
-            .ok_or(anyhow!("Error: message should be a JSON object {}", json))?;
-        let id = json_obj
-            .get("id")
-            .ok_or(anyhow!("Error: message should have an ID field {}", json))?;
-        let error = json_obj
-            .get("error")
-            .ok_or(anyhow!("Error: message should have a ERROR field {}", json))?;
-        let result = json_obj.get("result").ok_or(anyhow!(
-            "Error: message should have a RESULT field {}",
-            json
-        ))?;
-        Ok(Self {
-            id: id.clone(),
-            error: error.clone(),
-            result: result.clone(),
-        })
+    fn id(&self) -> String {
+        self.id.to_string()
     }
 
-    pub fn id(&self) -> String {
-        self.id.to_string()
+    fn to_json(&self) -> Value {
+        json![{
+            "error": self.error,
+            "id": self.id,
+            "result": self.result,
+        }]
     }
 
     pub fn to_pretty_string(&self) -> String {
@@ -151,11 +212,11 @@ pub trait Hook: Send + Sync {
     /// Hook to use/modify the contents of a message, before forwarding.
     /// Contents presented as Json.
     /// Return modified params (if modified)
-    fn process(
+    fn process_command(
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
-        message: &Message,
+        message: &CommandMessage,
     ) -> Result<Option<Value>>;
 }
 
@@ -163,11 +224,11 @@ pub trait Hook: Send + Sync {
 struct PrintToStdoutHook {}
 
 impl Hook for PrintToStdoutHook {
-    fn process(
+    fn process_command(
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
-        message: &Message,
+        message: &CommandMessage,
     ) -> Result<Option<Value>> {
         println!(
             "[{}] {:?}: {}",
@@ -350,11 +411,20 @@ where
                         client_addr, direction, err, line
                     );
                 }
-                Ok(mut msg) => {
-                    // Process hooks in order
-                    for h in hooks.read().unwrap().iter() {
-                        if let Ok(Some(new_params)) = h.process(direction, client_addr, &msg) {
-                            msg.params = new_params;
+                Ok(msg) => {
+                    match msg {
+                        Message::Command(mut cmd) => {
+                            // Process hooks in order
+                            for h in hooks.read().unwrap().iter() {
+                                if let Ok(Some(new_params)) =
+                                    h.process_command(direction, client_addr, &cmd)
+                                {
+                                    cmd.params = new_params;
+                                }
+                            }
+                        }
+                        Message::Response(_resp) => {
+                            // no-op
                         }
                     }
                 }

@@ -41,23 +41,27 @@ async fn test_client_stub_mining_init() {
     // Now check what did the stub receive
     assert_eq!(server.get_connect_count().await, 1);
     assert_eq!(server.get_message_count().await, 5);
-    let msg1 = server.get_message("1").await.unwrap();
-    assert_eq!(msg1.method, "mining.configure");
-    let msg2 = server.get_message("2").await.unwrap();
-    assert_eq!(msg2.method, "mining.subscribe");
-    let msg3 = server.get_message("3").await.unwrap();
-    assert_eq!(msg3.method, "mining.authorize");
-    let msg4 = server.get_message("4").await.unwrap();
-    assert_eq!(msg4.method, "mining.suggest_difficulty");
-    let msg5 = server.get_message("5").await.unwrap();
-    assert_eq!(msg5.method, "mining.submit");
+    let msg1 = server.get_message_by_id("1").await.unwrap();
+    assert_eq!(msg1.method().unwrap(), "mining.configure");
+    let msg2 = server.get_message_by_id("2").await.unwrap();
+    assert_eq!(msg2.method().unwrap(), "mining.subscribe");
+    let msg3 = server.get_message_by_id("3").await.unwrap();
+    assert_eq!(msg3.method().unwrap(), "mining.authorize");
+    let msg4 = server.get_message_by_id("4").await.unwrap();
+    assert_eq!(msg4.method().unwrap(), "mining.suggest_difficulty");
+    let msg5 = server.get_message_by_id("5").await.unwrap();
+    assert_eq!(msg5.method().unwrap(), "mining.submit");
 
-    assert_eq!(client.get_message_count().await, 4);
-    let resp1 = client.get_message("1").await.unwrap();
+    assert_eq!(client.get_message_count().await, 6);
+    let resp1 = client.get_message_by_id("1").await.unwrap();
     assert_eq!(
         resp1.to_string(),
         "1 null {\"version-rolling.mask\":\"1fffe000\"}"
     );
-    let resp5 = client.get_message("5").await.unwrap();
+    let resp3 = client.get_message_by_index(3).await.unwrap();
+    assert_eq!(resp3.to_string(), "null mining.set_difficulty 1000");
+    let resp4 = client.get_message_by_index(4).await.unwrap();
+    assert_eq!(resp4.method().unwrap(), "mining.notify");
+    let resp5 = client.get_message_by_id("5").await.unwrap();
     assert_eq!(resp5.to_string(), "5 null true");
 }
