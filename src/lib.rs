@@ -1,16 +1,80 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::env;
-use std::sync::Arc;
+use std::fmt;
+use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+
+#[derive(Clone, Copy)]
+pub enum Direction {
+    // #[debug("Client->Upstream")]
+    ClientToUpstream,
+
+    // #[debug("Upstream->Client")]
+    UpstreamToClient,
+}
+
+impl fmt::Debug for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Direction::ClientToUpstream => write!(f, "Client->Upstream"),
+            Direction::UpstreamToClient => write!(f, "Upstream->Client"),
+        }
+    }
+}
 
 /// Configuration for the Stratum V1 proxy
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
     pub listen_addr: String,
     pub upstream_addr: String,
+}
+
+/// Trait for (optional) hooks
+pub trait Hook: Send + Sync {
+    /// Hook to use/modify the contents of a message, before forwarding.
+    /// Contents presented as Json.
+    /// Return only if modified.
+    fn process(
+        &self,
+        dir: Direction,
+        client_addr: std::net::SocketAddr,
+        input: &Value,
+    ) -> Result<Option<Value>>;
+}
+
+/// A built-in hook that prints out the content of the messages on stdout
+struct PrintToStdoutHook {}
+
+impl Hook for PrintToStdoutHook {
+    fn process(
+        &self,
+        dir: Direction,
+        client_addr: std::net::SocketAddr,
+        input: &Value,
+    ) -> Result<Option<Value>> {
+        // Pretty-print JSON
+        if let Ok(pretty) = serde_json::to_string_pretty(input) {
+            println!(
+                "[{}] {:?}: {}",
+                client_addr,
+                dir,
+                pretty.replace('\n', "\n     ")
+            );
+        } else {
+            println!(
+                "[{}] {:?}: Error: coudln't pretty-print {:?}",
+                client_addr, dir, input,
+            );
+        }
+        Ok(None)
+    }
+}
+
+pub fn default_hooks() -> Arc<RwLock<Vec<Box<dyn Hook>>>> {
+    Arc::new(RwLock::new(vec![Box::new(PrintToStdoutHook {})]))
 }
 
 impl ProxyConfig {
@@ -37,7 +101,7 @@ impl ProxyConfig {
 }
 
 /// Run the Stratum V1 proxy server with the given configuration
-pub async fn run_proxy(config: ProxyConfig) -> Result<()> {
+pub async fn run_proxy(config: ProxyConfig, hooks: Arc<RwLock<Vec<Box<dyn Hook>>>>) -> Result<()> {
     println!("=== Stratum V1 Proxy ===");
     println!("Listening on: {}", config.listen_addr);
     println!("Upstream: {}", config.upstream_addr);
@@ -54,9 +118,10 @@ pub async fn run_proxy(config: ProxyConfig) -> Result<()> {
             Ok((client_socket, client_addr)) => {
                 println!("[NEW CONNECTION] Client connected from: {}", client_addr);
                 let config = config.clone();
+                let hooks_clone = hooks.clone();
 
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(client_socket, config).await {
+                    if let Err(e) = handle_client(client_socket, config, hooks_clone).await {
                         eprintln!("[ERROR] Client {} error: {}", client_addr, e);
                     }
                     println!("[DISCONNECTED] Client {} disconnected", client_addr);
@@ -70,7 +135,11 @@ pub async fn run_proxy(config: ProxyConfig) -> Result<()> {
 }
 
 /// Handle a single client connection
-async fn handle_client(client_socket: TcpStream, config: ProxyConfig) -> Result<()> {
+async fn handle_client(
+    client_socket: TcpStream,
+    config: ProxyConfig,
+    hooks: Arc<RwLock<Vec<Box<dyn Hook>>>>,
+) -> Result<()> {
     let client_addr = client_socket.peer_addr()?;
 
     // Connect to upstream server
@@ -95,12 +164,14 @@ async fn handle_client(client_socket: TcpStream, config: ProxyConfig) -> Result<
 
     // Spawn task to forward client -> upstream
     let upstream_writer_clone = upstream_writer.clone();
+    let hooks_clone = hooks.clone();
     let client_to_upstream = tokio::spawn(async move {
         forward_messages(
             client_reader,
             upstream_writer_clone,
             client_addr,
-            "CLIENT -> UPSTREAM",
+            Direction::ClientToUpstream,
+            hooks_clone,
         )
         .await
     });
@@ -112,7 +183,8 @@ async fn handle_client(client_socket: TcpStream, config: ProxyConfig) -> Result<
             upstream_reader,
             client_writer_clone,
             client_addr,
-            "UPSTREAM -> CLIENT",
+            Direction::UpstreamToClient,
+            hooks,
         )
         .await
     });
@@ -139,7 +211,8 @@ async fn forward_messages<R, W>(
     reader: R,
     writer: Arc<Mutex<W>>,
     client_addr: std::net::SocketAddr,
-    direction: &str,
+    direction: Direction,
+    hooks: Arc<RwLock<Vec<Box<dyn Hook>>>>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -160,19 +233,23 @@ where
             break;
         }
 
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
+        // Prepare to process hooks
 
-        // Print the message to stdout
-        println!("[{}] {}: {}", client_addr, direction, trimmed);
-
-        // Try to pretty-print JSON if possible
-        if let Ok(json) = serde_json::from_str::<Value>(trimmed) {
-            if let Ok(pretty) = serde_json::to_string_pretty(&json) {
-                println!("  └─ Parsed: {}", pretty.replace('\n', "\n     "));
+        // Parse contents into Json
+        if let Ok(json) = serde_json::from_str::<Value>(line.trim()) {
+            let mut value = json;
+            // Process hooks in order
+            for h in hooks.read().unwrap().iter() {
+                if let Ok(Some(res)) = h.process(direction, client_addr, &value) {
+                    value = res;
+                }
             }
+        } else {
+            // Couldn't parse into Json, can't call hooks
+            println!(
+                "[{}] {:?}: Warning: couldn't parse, hooks not called: {}",
+                client_addr, direction, line
+            );
         }
 
         // Forward the message (including newline)

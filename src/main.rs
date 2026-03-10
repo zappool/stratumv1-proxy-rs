@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use stratumv1_proxy_rs::{run_proxy, ProxyConfig};
+use stratumv1_proxy_rs::{default_hooks, run_proxy, ProxyConfig};
 
 /// Stratum V1 Proxy - forwards mining protocol traffic between clients and upstream server
 #[derive(Parser, Debug)]
@@ -20,5 +20,5 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = ProxyConfig::new(args.listen, args.upstream);
-    run_proxy(config).await
+    run_proxy(config, default_hooks()).await
 }
