@@ -1,4 +1,9 @@
-use anyhow::{Context, Result};
+#[cfg(test)]
+mod server_stub;
+#[cfg(test)]
+mod test_proxy;
+
+use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::env;
 use std::fmt;
@@ -6,6 +11,60 @@ use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+
+/// A Stratum V1 message, with id, method, and custom parameters
+#[derive(Clone)]
+pub struct Message {
+    pub id: String,
+    pub method: String,
+    pub params: Value,
+}
+
+impl Message {
+    pub fn from_json(json: &Value) -> Result<Self> {
+        let json_obj = json.as_object().ok_or(anyhow!(
+            "Error: message should be a JSON object {}",
+            json.to_string()
+        ))?;
+        let id = json_obj.get("id").ok_or(anyhow!(
+            "Error: message should have an ID field {}",
+            json.to_string()
+        ))?;
+        let method = json_obj.get("method").ok_or(anyhow!(
+            "Error: message should have a METHOD field {}",
+            json.to_string()
+        ))?;
+        let method_str = method.as_str().ok_or(anyhow!(
+            "Error: message should have a METHOD string field {}",
+            method.to_string()
+        ))?;
+        let params = json_obj.get("params").ok_or(anyhow!(
+            "Error: message should have a PARAMS field {}",
+            json.to_string()
+        ))?;
+        Ok(Self {
+            id: id.to_string(),
+            method: method_str.to_string(),
+            params: params.clone(),
+        })
+    }
+
+    pub fn to_prerry_string(&self) -> String {
+        // Pretty-print JSON
+        if let Ok(pretty) = serde_json::to_string_pretty(&self.params) {
+            format!("{} {} {}", self.id, self.method, pretty)
+        } else {
+            // coudln't pretty-print json
+            self.to_string()
+        }
+    }
+}
+
+impl ToString for Message {
+    fn to_string(&self) -> String {
+        format!("{} {} {}", self.id, self.method, self.params.to_string())
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum Direction {
@@ -36,12 +95,12 @@ pub struct ProxyConfig {
 pub trait Hook: Send + Sync {
     /// Hook to use/modify the contents of a message, before forwarding.
     /// Contents presented as Json.
-    /// Return only if modified.
+    /// Return modified params (if modified)
     fn process(
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
-        input: &Value,
+        message: &Message,
     ) -> Result<Option<Value>>;
 }
 
@@ -53,22 +112,14 @@ impl Hook for PrintToStdoutHook {
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
-        input: &Value,
+        message: &Message,
     ) -> Result<Option<Value>> {
-        // Pretty-print JSON
-        if let Ok(pretty) = serde_json::to_string_pretty(input) {
-            println!(
-                "[{}] {:?}: {}",
-                client_addr,
-                dir,
-                pretty.replace('\n', "\n     ")
-            );
-        } else {
-            println!(
-                "[{}] {:?}: Error: coudln't pretty-print {:?}",
-                client_addr, dir, input,
-            );
-        }
+        println!(
+            "[{}] {:?}: {}",
+            client_addr,
+            dir,
+            message.to_prerry_string(),
+        );
         Ok(None)
     }
 }
@@ -235,19 +286,28 @@ where
 
         // Prepare to process hooks
 
-        // Parse contents into Json
+        // Parse contents into Json.  Note: if messages come fast and are not newline-separated, multiple onec can get appended here
         if let Ok(json) = serde_json::from_str::<Value>(line.trim()) {
-            let mut value = json;
-            // Process hooks in order
-            for h in hooks.read().unwrap().iter() {
-                if let Ok(Some(res)) = h.process(direction, client_addr, &value) {
-                    value = res;
+            match Message::from_json(&json) {
+                Err(err) => {
+                    eprintln!(
+                        "[{}] {:?}: ERROR: couldn't parse, hooks not called: {} {}",
+                        client_addr, direction, err, line
+                    );
+                }
+                Ok(mut msg) => {
+                    // Process hooks in order
+                    for h in hooks.read().unwrap().iter() {
+                        if let Ok(Some(new_params)) = h.process(direction, client_addr, &msg) {
+                            msg.params = new_params;
+                        }
+                    }
                 }
             }
         } else {
             // Couldn't parse into Json, can't call hooks
-            println!(
-                "[{}] {:?}: Warning: couldn't parse, hooks not called: {}",
+            eprintln!(
+                "[{}] {:?}: ERROR: couldn't parse, hooks not called: {}",
                 client_addr, direction, line
             );
         }
