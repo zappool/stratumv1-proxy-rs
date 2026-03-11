@@ -250,13 +250,14 @@ impl Proxy {
             // Prepare to process hooks
 
             // Parse contents into Json.  Note: if messages come fast and are not newline-separated, multiple onec can get appended here
-            if let Ok(json) = serde_json::from_str::<Value>(line.trim()) {
+            let data_to_write = if let Ok(json) = serde_json::from_str::<Value>(line.trim()) {
                 match Message::from_json(&json) {
                     Err(err) => {
                         eprintln!(
                             "[{}] {:?}: ERROR: couldn't parse, hooks not called: {} {}",
                             client_addr, direction, err, line
                         );
+                        line.clone()
                     }
                     Ok(msg) => {
                         match msg {
@@ -269,9 +270,12 @@ impl Proxy {
                                         cmd.params = new_params;
                                     }
                                 }
+                                // Send processed command
+                                cmd.to_json().to_string() + "\n"
                             }
                             Message::Response(_resp) => {
-                                // no-op
+                                // no hook, no change
+                                line.clone()
                             }
                         }
                     }
@@ -282,12 +286,13 @@ impl Proxy {
                     "[{}] {:?}: ERROR: couldn't parse, hooks not called: {}",
                     client_addr, direction, line
                 );
-            }
+                line.clone()
+            };
 
             // Forward the message (including newline)
             let mut writer_guard = writer.lock().await;
             writer_guard
-                .write_all(line.as_bytes())
+                .write_all(data_to_write.as_bytes())
                 .await
                 .context("Failed to write to destination")?;
             writer_guard.flush().await.context("Failed to flush")?;
