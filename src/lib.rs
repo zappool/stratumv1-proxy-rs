@@ -184,7 +184,7 @@ impl std::fmt::Display for ResponseMessage {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Direction {
     // #[debug("Client->Upstream")]
     ClientToUpstream,
@@ -212,7 +212,6 @@ pub struct ProxyConfig {
 /// Trait for (optional) hooks
 pub trait Hook: Send + Sync {
     /// Hook to use/modify the contents of a message, before forwarding.
-    /// Contents presented as Json.
     /// Return modified params (if modified)
     fn process_command(
         &self,
@@ -220,6 +219,14 @@ pub trait Hook: Send + Sync {
         client_addr: std::net::SocketAddr,
         message: &CommandMessage,
     ) -> Result<Option<Value>>;
+
+    /// Hook to use of a response before forwarding.
+    fn process_response(
+        &self,
+        dir: Direction,
+        client_addr: std::net::SocketAddr,
+        response: &ResponseMessage,
+    );
 }
 
 /// A built-in hook that prints out the content of the messages on stdout
@@ -233,12 +240,27 @@ impl Hook for PrintToStdoutHook {
         message: &CommandMessage,
     ) -> Result<Option<Value>> {
         println!(
-            "[{}] {:?}: {}",
+            "[{}] {:?}: Command {}",
             client_addr,
             dir,
             message.to_pretty_string(),
         );
         Ok(None)
+    }
+
+    /// Hook to use of a response before forwarding.
+    fn process_response(
+        &self,
+        dir: Direction,
+        client_addr: std::net::SocketAddr,
+        response: &ResponseMessage,
+    ) {
+        println!(
+            "[{}] {:?}: Response {}",
+            client_addr,
+            dir,
+            response.to_pretty_string(),
+        );
     }
 }
 

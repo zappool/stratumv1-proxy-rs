@@ -22,6 +22,10 @@ async fn main() -> Result<()> {
     let config = ProxyConfig::new(args.listen, args.upstream);
     let proxy = Proxy::new(config, default_hooks());
     proxy.start().await?;
-    proxy.stop(true).await?;
-    Ok(())
+    // Keep the process, never exit
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await
+    }
+    // proxy.stop(true).await?;
+    // Ok(())
 }

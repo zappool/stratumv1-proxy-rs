@@ -106,7 +106,7 @@ impl Proxy {
         if self.listener.read().await.is_none() {
             return Err(anyhow!("Not listening!"));
         }
-        println!("Proxy waiting for connections ...");
+        println!("Proxy waiting for client connections ...");
 
         loop {
             let listener = self.listener.read().await;
@@ -273,8 +273,12 @@ impl Proxy {
                                 // Send processed command
                                 cmd.to_json().to_string() + "\n"
                             }
-                            Message::Response(_resp) => {
-                                // no hook, no change
+                            Message::Response(resp) => {
+                                // Process hooks in order
+                                for h in hooks.read().await.iter() {
+                                    h.process_response(direction, client_addr, &resp)
+                                }
+                                // Send the orignal (no change)
                                 line.clone()
                             }
                         }
