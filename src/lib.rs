@@ -1,12 +1,16 @@
-#[cfg(test)]
+#[cfg(any(test, feature = "teststubs"))]
 mod client_stub;
 mod proxy;
-#[cfg(test)]
+#[cfg(any(test, feature = "teststubs"))]
 mod server_stub;
 #[cfg(test)]
 mod test_proxy;
 
+#[cfg(feature = "teststubs")]
+pub use client_stub::ClientStub;
 pub use proxy::Proxy;
+#[cfg(feature = "teststubs")]
+pub use server_stub::ServerStub;
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -219,7 +223,7 @@ pub trait Hook: Send + Sync {
 }
 
 /// A built-in hook that prints out the content of the messages on stdout
-struct PrintToStdoutHook {}
+pub struct PrintToStdoutHook {}
 
 impl Hook for PrintToStdoutHook {
     fn process_command(

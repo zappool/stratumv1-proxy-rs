@@ -13,6 +13,11 @@ path = "src/lib.rs"
 name = "stratumv1-proxy-rs"
 path = "src/main.rs"
 
+[features]
+default = []
+# Expose testing stubs
+teststubs = []
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
