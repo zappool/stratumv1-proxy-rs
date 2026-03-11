@@ -130,7 +130,7 @@ impl ServerStub {
         assert!(self.listener.read().await.is_none());
         std::mem::drop(listener);
 
-        println!("Stopped listening, un-bound from port");
+        println!("Server Stub: Stopped listening, un-bound from port");
         Ok(())
     }
 
@@ -155,13 +155,13 @@ impl ServerStub {
                         Ok((client_socket, client_addr)) => {
                             let count = *self.connect_count.read().await + 1;
                             *self.connect_count.write().await = count;
-                            println!("[NEW CONNECTION] Client connected from: {}", client_addr);
+                            println!("Server Stub: Client connected from: {}", client_addr);
                             let store = self.message_store.clone();
                             let thread = tokio::spawn(async move {
                                 if let Err(e) = Self::handle_client(client_socket, store).await {
-                                    eprintln!("[ERROR] Client {} error: {}", client_addr, e);
+                                    eprintln!("Server Stub: Client {} error: {}", client_addr, e);
                                 }
-                                println!("[DISCONNECTED] Client {} disconnected", client_addr);
+                                println!("Server Stub: Client {} disconnected", client_addr);
                             });
                             // TODO Change this: we wait on this thread here
                             // This way no multiple clients can be handled
@@ -169,7 +169,7 @@ impl ServerStub {
                             let _ = thread.await;
                         }
                         Err(e) => {
-                            eprintln!("[ERROR] Failed to accept connection: {}", e);
+                            eprintln!("Server Stub: Failed to accept connection: {}", e);
                         }
                     }
                 }
@@ -209,15 +209,21 @@ impl ServerStub {
             match serde_json::from_str::<Value>(&line) {
                 Err(err) => {
                     // Couldn't parse into Json
-                    eprintln!("[{}]: ERROR: couldn't parse: {} {}", client_addr, err, line);
+                    eprintln!(
+                        "[{}]: Server Stub: couldn't parse: {} {}",
+                        client_addr, err, line
+                    );
                 }
                 Ok(json) => {
                     match Message::from_json(&json) {
                         Err(err) => {
-                            eprintln!("[{}]: ERROR: couldn't parse: {} {}", client_addr, err, line);
+                            eprintln!(
+                                "[{}]: Server Stub: couldn't parse: {} {}",
+                                client_addr, err, line
+                            );
                         }
                         Ok(msg) => {
-                            println!("[{}]: {}", client_addr, msg.to_string());
+                            println!("[{}]: Server Stub: got {}", client_addr, msg.to_string());
                             // Store the message
                             message_store.write().await.add(msg.id(), &msg);
                             // Send reply
@@ -338,7 +344,7 @@ impl ServerStub {
             .await
             .context("Failed to write message")?;
         writer.flush().await.context("Failed to flush")?;
-        println!("Sent response, {}", message.to_string());
+        println!("Server Stub: Sent response, {}", message.to_string());
         Ok(())
     }
 

@@ -1,5 +1,6 @@
 use crate::client_stub::ClientStub;
 use crate::server_stub::ServerStub;
+use crate::{default_hooks, Proxy, ProxyConfig};
 use serial_test::serial;
 
 #[tokio::test]
@@ -11,8 +12,8 @@ async fn test_client_stub_connect_only() {
 
     let mut client = ClientStub::new(server_addr, "username.device");
     let _ = client.start().await.unwrap();
-    let _ = client.stop(false).await.unwrap();
 
+    let _ = client.stop(false).await.unwrap();
     let _ = server.stop(true).await.unwrap();
 
     assert_eq!(server.get_connect_count().await, 1);
@@ -29,13 +30,79 @@ async fn test_client_stub_mining_init() {
 
     let mut client = ClientStub::new(server_addr, "username.device");
     let _ = client.start().await.unwrap();
+    let _ = client.send_mining_authorize().await.unwrap();
+    let _ = client.send_mining_submit().await.unwrap();
+    let _ = client.stop(true).await.unwrap();
+
+    let _ = server.stop(true).await.unwrap();
+
+    // Now check what did the stub receive
+    assert_eq!(server.get_connect_count().await, 1);
+    assert_eq!(server.get_message_count().await, 2);
+    let msg1 = server.get_message_by_id("1").await.unwrap();
+    assert_eq!(msg1.method().unwrap(), "mining.authorize");
+    let msg2 = server.get_message_by_id("2").await.unwrap();
+    assert_eq!(msg2.method().unwrap(), "mining.submit");
+
+    assert_eq!(client.get_message_count().await, 4);
+    let resp1 = client.get_message_by_id("1").await.unwrap();
+    assert_eq!(resp1.to_string(), "1 null true");
+    let resp3 = client.get_message_by_index(1).await.unwrap();
+    assert_eq!(resp3.to_string(), "null mining.set_difficulty 1000");
+    let resp4 = client.get_message_by_index(2).await.unwrap();
+    assert_eq!(resp4.method().unwrap(), "mining.notify");
+    let resp5 = client.get_message_by_id("2").await.unwrap();
+    assert_eq!(resp5.to_string(), "2 null true");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_proxy_connect_only() {
+    let server_addr = "127.0.0.1:43333";
+    let proxy_addr = "127.0.0.1:53333";
+
+    let server = ServerStub::new(server_addr);
+    let _ = server.start().await.unwrap();
+
+    let proxy_config = ProxyConfig::new(proxy_addr.to_string(), server_addr.to_string());
+    let proxy = Proxy::new(proxy_config, default_hooks());
+    let _ = proxy.start().await.unwrap();
+
+    let mut client = ClientStub::new(proxy_addr, "username.device");
+    let _ = client.start().await.unwrap();
+
+    let _ = client.stop(false).await.unwrap();
+    let _ = proxy.stop(false).await.unwrap();
+    let _ = server.stop(true).await.unwrap();
+
+    assert_eq!(server.get_connect_count().await, 1);
+    assert_eq!(server.get_message_count().await, 0);
+    assert_eq!(client.get_message_count().await, 0);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_proxy_mining_notify_submit() {
+    let server_addr = "127.0.0.1:43333";
+    let proxy_addr = "127.0.0.1:53333";
+
+    let server = ServerStub::new(server_addr);
+    let _ = server.start().await.unwrap();
+
+    let proxy_config = ProxyConfig::new(proxy_addr.to_string(), server_addr.to_string());
+    let proxy = Proxy::new(proxy_config, default_hooks());
+    let _ = proxy.start().await.unwrap();
+
+    let mut client = ClientStub::new(proxy_addr, "username.device");
+    let _ = client.start().await.unwrap();
     let _ = client.send_mining_configure().await.unwrap();
     let _ = client.send_mining_subscribe().await.unwrap();
     let _ = client.send_mining_authorize().await.unwrap();
     let _ = client.send_mining_suggest_difficulty(1000).await.unwrap();
     let _ = client.send_mining_submit().await.unwrap();
-    let _ = client.stop(true).await.unwrap();
 
+    let _ = client.stop(true).await.unwrap();
+    let _ = proxy.stop(true).await.unwrap();
     let _ = server.stop(true).await.unwrap();
 
     // Now check what did the stub receive

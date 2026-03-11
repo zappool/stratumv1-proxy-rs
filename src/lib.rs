@@ -6,13 +6,12 @@ mod server_stub;
 #[cfg(test)]
 mod test_proxy;
 
-pub use proxy::run_proxy;
+pub use proxy::Proxy;
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::env;
 use std::fmt;
-use std::sync::{Arc, RwLock};
 
 #[derive(Clone)]
 pub enum Message {
@@ -239,8 +238,8 @@ impl Hook for PrintToStdoutHook {
     }
 }
 
-pub fn default_hooks() -> Arc<RwLock<Vec<Box<dyn Hook>>>> {
-    Arc::new(RwLock::new(vec![Box::new(PrintToStdoutHook {})]))
+pub fn default_hooks() -> Vec<Box<dyn Hook>> {
+    vec![Box::new(PrintToStdoutHook {})]
 }
 
 impl ProxyConfig {
