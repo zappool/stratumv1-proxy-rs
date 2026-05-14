@@ -13,6 +13,7 @@ pub use proxy::Proxy;
 pub use server_stub::ServerStub;
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::env;
 use std::fmt;
@@ -210,10 +211,11 @@ pub struct ProxyConfig {
 }
 
 /// Trait for (optional) hooks
+#[async_trait]
 pub trait Hook: Send + Sync {
     /// Hook to use/modify the contents of a message, before forwarding.
     /// Return modified params (if modified)
-    fn process_command(
+    async fn process_command(
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
@@ -221,7 +223,7 @@ pub trait Hook: Send + Sync {
     ) -> Result<Option<Value>>;
 
     /// Hook to use of a response before forwarding.
-    fn process_response(
+    async fn process_response(
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
@@ -232,8 +234,9 @@ pub trait Hook: Send + Sync {
 /// A built-in hook that prints out the content of the messages on stdout
 pub struct PrintToStdoutHook {}
 
+#[async_trait]
 impl Hook for PrintToStdoutHook {
-    fn process_command(
+    async fn process_command(
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
@@ -249,7 +252,7 @@ impl Hook for PrintToStdoutHook {
     }
 
     /// Hook to use of a response before forwarding.
-    fn process_response(
+    async fn process_response(
         &self,
         dir: Direction,
         client_addr: std::net::SocketAddr,
