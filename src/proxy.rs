@@ -265,7 +265,7 @@ impl Proxy {
                                 // Process hooks in order
                                 for h in hooks.read().await.iter() {
                                     if let Ok(Some(new_params)) =
-                                        h.process_command(direction, client_addr, &cmd)
+                                        h.process_command(direction, client_addr, &cmd).await
                                     {
                                         cmd.params = new_params;
                                     }
@@ -276,7 +276,7 @@ impl Proxy {
                             Message::Response(resp) => {
                                 // Process hooks in order
                                 for h in hooks.read().await.iter() {
-                                    h.process_response(direction, client_addr, &resp)
+                                    h.process_response(direction, client_addr, &resp).await
                                 }
                                 // Send the orignal (no change)
                                 line.clone()
